@@ -15,6 +15,13 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator
 import tiktoken
 from loguru import logger
 
+# Cache the tiktoken encoding to avoid repeated instantiation on every
+# truncate/encode call. Encoding objects are thread-safe and reusable.
+try:
+    _TIKTOKEN_ENC = tiktoken.get_encoding("cl100k_base")
+except Exception:  # pragma: no cover
+    _TIKTOKEN_ENC = None
+
 from nanobot.agent.runner import AgentRunner, AgentRunSpec
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.session.manager import Session
@@ -627,14 +634,12 @@ class Consolidator:
         budget = self._input_token_budget - reserve_tokens
         if budget <= 0:
             return truncate_text(text, _RAW_ARCHIVE_MAX_CHARS)
-        try:
-            enc = tiktoken.get_encoding("cl100k_base")
-            tokens = enc.encode(text)
+        if _TIKTOKEN_ENC is not None:
+            tokens = _TIKTOKEN_ENC.encode(text)
             if len(tokens) <= budget:
                 return text
-            return enc.decode(tokens[:budget]) + "\n... (truncated)"
-        except Exception:
-            return truncate_text(text, budget * 4)
+            return _TIKTOKEN_ENC.decode(tokens[:budget]) + "\n... (truncated)"
+        return truncate_text(text, budget * 4)
 
     async def archive(self, messages: list[dict]) -> str | None:
         """Summarize messages via LLM and append to history.jsonl.
@@ -661,10 +666,9 @@ class Consolidator:
             # exceed the LLM context window.
             reserve_tokens = 0
             if dedup_context:
-                try:
-                    enc = tiktoken.get_encoding("cl100k_base")
-                    reserve_tokens = len(enc.encode(dedup_context)) + 100
-                except Exception:
+                if _TIKTOKEN_ENC is not None:
+                    reserve_tokens = len(_TIKTOKEN_ENC.encode(dedup_context)) + 100
+                else:
                     reserve_tokens = len(dedup_context) // 4 + 100
 
             # If dedup_context alone would exhaust the budget, drop it rather than
