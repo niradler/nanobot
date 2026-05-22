@@ -25,6 +25,7 @@ def store(tmp_path):
 def mock_provider():
     p = MagicMock()
     p.chat_with_retry = AsyncMock()
+    p.generation.max_tokens = 8_192
     return p
 
 
@@ -257,6 +258,27 @@ class TestDreamRun:
         system_msg = mock_provider.chat_with_retry.call_args.kwargs["messages"][0]["content"]
         # The template renders with stale_threshold_days=14 → LLM must see "N>14"
         assert "N>14" in system_msg
+
+    async def test_phase1_retries_with_doubled_max_tokens_on_length(
+        self, dream, mock_provider, mock_runner, store,
+    ):
+        """Phase 1 must retry with doubled max_tokens when finish_reason=length."""
+        store.append_history("some event")
+        # First call hits token limit, second call succeeds.
+        mock_provider.chat_with_retry.side_effect = [
+            MagicMock(finish_reason="length", content=""),
+            MagicMock(finish_reason="stop", content="New fact"),
+        ]
+        mock_runner.run = AsyncMock(return_value=_make_run_result(
+            tool_events=[{"name": "edit_file", "status": "ok", "detail": "memory/MEMORY.md"}],
+        ))
+
+        result = await dream.run()
+        assert result is True
+        assert mock_provider.chat_with_retry.call_count == 2
+        # Retry should use max_tokens = min(8192 * 2, 32000) = 16384
+        retry_call = mock_provider.chat_with_retry.call_args_list[1]
+        assert retry_call.kwargs["max_tokens"] == 16_384
 
 
 class TestDreamPromptCaps:

@@ -1181,6 +1181,41 @@ class Dream:
                 t1_elapsed, len(analysis), phase1_response.finish_reason,
             )
             logger.debug("Dream Phase 1 analysis ({} chars): {}", len(analysis), analysis[:500])
+
+            # Retry once with doubled max_tokens if the model ran out of room.
+            # This often happens with reasoning models whose thinking tokens
+            # consume the default 8 k budget before emitting any content.
+            if phase1_response.finish_reason == "length":
+                base_max = self.provider.generation.max_tokens
+                retry_max = min(base_max * 2, 32_000)
+                logger.warning(
+                    "Dream Phase 1 hit max_tokens (base={}), retrying with max_tokens={}",
+                    base_max, retry_max,
+                )
+                phase1_response = await self.provider.chat_with_retry(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": render_template(
+                                "agent/dream_phase1.md",
+                                strip=True,
+                                stale_threshold_days=_STALE_THRESHOLD_DAYS,
+                            ),
+                        },
+                        {"role": "user", "content": phase1_prompt},
+                    ],
+                    tools=None,
+                    tool_choice=None,
+                    max_tokens=retry_max,
+                )
+                t1_elapsed = time.perf_counter() - t1_start
+                analysis = phase1_response.content or ""
+                logger.info(
+                    "Dream Phase 1 retry complete in {:.1f}s: {} chars, finish_reason={}",
+                    t1_elapsed, len(analysis), phase1_response.finish_reason,
+                )
+
             if phase1_response.finish_reason != "stop":
                 logger.warning(
                     "Dream Phase 1 finish_reason={}: {}",
