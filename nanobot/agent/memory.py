@@ -647,6 +647,8 @@ class Consolidator:
             formatted = MemoryStore._format_messages(messages)
 
             # Inject current memory context for dedup-aware summarization.
+            # Char limits assume ~1 token/char for English; CJK content may
+            # require proportionally lower limits to stay within token budget.
             memory_preview = self.store.read_memory()[:4000]
             user_preview = self.store.read_user()[:2000]
             dedup_context = ""
@@ -664,6 +666,12 @@ class Consolidator:
                     reserve_tokens = len(enc.encode(dedup_context)) + 100
                 except Exception:
                     reserve_tokens = len(dedup_context) // 4 + 100
+
+            # If dedup_context alone would exhaust the budget, drop it rather than
+            # sending a truncated message + oversized context that risks overflow.
+            if self._input_token_budget <= reserve_tokens:
+                dedup_context = ""
+                reserve_tokens = 0
 
             formatted = self._truncate_to_token_budget(
                 formatted, reserve_tokens=reserve_tokens
