@@ -477,6 +477,10 @@ class WebSocketChannel(BaseChannel):
         self._conn_chats: dict[Any, set[str]] = {}
         # connection -> default chat_id for legacy frames that omit routing.
         self._conn_default: dict[Any, str] = {}
+        # Chat IDs that opted into WebUI-specific rendering by sending a typed
+        # envelope with ``webui: true``. Raw WebSocket clients keep the legacy
+        # wire shape.
+        self._webui_chats: set[str] = set()
         # Single-use tokens consumed at WebSocket handshake.
         self._issued_tokens: dict[str, float] = {}
         # Multi-use tokens for HTTP routes served beside WS; checked but not consumed.
@@ -1528,6 +1532,7 @@ class WebSocketChannel(BaseChannel):
             metadata: dict[str, Any] = {"remote": getattr(connection, "remote_address", None)}
             if envelope.get("webui") is True:
                 metadata["webui"] = True
+                self._webui_chats.add(cid)
             cli_apps = normalize_cli_app_mentions(envelope.get("cli_apps"))
             if cli_apps:
                 metadata["cli_apps"] = cli_apps
@@ -1564,6 +1569,7 @@ class WebSocketChannel(BaseChannel):
         self._subs.clear()
         self._conn_chats.clear()
         self._conn_default.clear()
+        self._webui_chats.clear()
         self._issued_tokens.clear()
         self._api_tokens.clear()
 
@@ -1642,7 +1648,8 @@ class WebSocketChannel(BaseChannel):
                 await self._safe_send_to(connection, raw, label=" ")
             return
         text = msg.content
-        wire_text = self._rewrite_local_markdown_images(text)
+        should_rewrite_images = msg.chat_id in self._webui_chats
+        wire_text = self._rewrite_local_markdown_images(text) if should_rewrite_images else text
         payload: dict[str, Any] = {
             "event": "message",
             "chat_id": msg.chat_id,
@@ -1742,25 +1749,32 @@ class WebSocketChannel(BaseChannel):
             return
         meta = metadata or {}
         stream_key = (chat_id, str(meta.get("_stream_id") or ""))
+        should_rewrite_images = chat_id in self._webui_chats
+        transcript_body: dict[str, Any] | None = None
         if meta.get("_stream_end"):
             body: dict[str, Any] = {"event": "stream_end", "chat_id": chat_id}
-            buffered = self._stream_text_buffers.pop(stream_key, [])
-            if delta:
-                buffered.append(delta)
-            full_text = "".join(buffered)
-            rewritten = self._rewrite_local_markdown_images(full_text)
-            if rewritten != full_text:
-                body["text"] = rewritten
+            if should_rewrite_images:
+                buffered = self._stream_text_buffers.pop(stream_key, [])
+                if delta:
+                    buffered.append(delta)
+                full_text = "".join(buffered)
+                rewritten = self._rewrite_local_markdown_images(full_text)
+                if rewritten != full_text or delta:
+                    body["text"] = rewritten
+                    transcript_body = {**body, "text": full_text}
         else:
             body = {
                 "event": "delta",
                 "chat_id": chat_id,
                 "text": delta,
             }
-            self._stream_text_buffers.setdefault(stream_key, []).append(delta)
+            if should_rewrite_images:
+                self._stream_text_buffers.setdefault(stream_key, []).append(delta)
         if meta.get("_stream_id") is not None:
             body["stream_id"] = meta["_stream_id"]
-        self._try_append_webui_transcript(chat_id, body)
+            if transcript_body is not None:
+                transcript_body["stream_id"] = meta["_stream_id"]
+        self._try_append_webui_transcript(chat_id, transcript_body or body)
         raw = json.dumps(body, ensure_ascii=False)
         for connection in conns:
             await self._safe_send_to(connection, raw, label=" stream ")

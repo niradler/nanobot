@@ -501,6 +501,7 @@ async def test_send_delta_stream_end_rewrites_local_markdown_image(monkeypatch, 
     )
     mock_ws = AsyncMock()
     channel._attach(mock_ws, "chat-1")
+    channel._webui_chats.add("chat-1")
 
     await channel.send_delta("chat-1", "![Diagram](", {"_stream_delta": True, "_stream_id": "sid"})
     await channel.send_delta("chat-1", "diagram.png)", {"_stream_delta": True, "_stream_id": "sid"})
@@ -533,6 +534,7 @@ async def test_send_delta_stream_end_rewrites_inline_final_text(monkeypatch, tmp
     )
     mock_ws = AsyncMock()
     channel._attach(mock_ws, "chat-1")
+    channel._webui_chats.add("chat-1")
 
     await channel.send_delta(
         "chat-1",
@@ -544,6 +546,31 @@ async def test_send_delta_stream_end_rewrites_inline_final_text(monkeypatch, tmp
     final = json.loads(mock_ws.send.await_args.args[0])
     assert final["event"] == "stream_end"
     assert final["text"].startswith("![Diagram](/api/media/")
+
+
+@pytest.mark.asyncio
+async def test_send_delta_stream_end_leaves_non_webui_payload_unchanged(tmp_path) -> None:
+    bus = MagicMock()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "diagram.png").write_bytes(b"\x89PNG\r\n\x1a\nimage")
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "streaming": True},
+        bus,
+        workspace_path=workspace,
+    )
+    mock_ws = AsyncMock()
+    channel._attach(mock_ws, "chat-1")
+
+    await channel.send_delta(
+        "chat-1",
+        "![Diagram](diagram.png)",
+        {"_stream_delta": True, "_stream_end": True, "_stream_id": "sid"},
+    )
+
+    mock_ws.send.assert_awaited_once()
+    final = json.loads(mock_ws.send.await_args.args[0])
+    assert final == {"event": "stream_end", "chat_id": "chat-1", "stream_id": "sid"}
 
 
 @pytest.mark.asyncio
