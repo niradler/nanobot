@@ -981,6 +981,8 @@ def _run_gateway(
 
         # Dream is an internal job — run directly, not through the agent loop.
         if job.name == "dream":
+            from nanobot.agent.dream_session import dream_session_key, prune_dream_sessions
+
             store = agent.context.memory
             try:
                 result = store.build_dream_prompt()
@@ -988,7 +990,8 @@ def _run_gateway(
                     logger.info("Dream: nothing to process")
                     return None
                 prompt, last_cursor = result
-                resp = await agent.process_direct(prompt, session_key="dream")
+                key = dream_session_key()
+                resp = await agent.process_direct(prompt, session_key=key, ephemeral=True)
                 if resp is not None:
                     store.set_last_dream_cursor(last_cursor)
                     logger.info("Dream cron job completed, cursor advanced to {}", last_cursor)
@@ -1000,6 +1003,7 @@ def _run_gateway(
                     if sha:
                         logger.info("Dream commit: {}", sha)
                 store.compact_history()
+                prune_dream_sessions(agent.sessions.sessions_dir)
             return None
 
         # Heartbeat is a system job that checks HEARTBEAT.md for active tasks.
