@@ -1394,6 +1394,138 @@ def test_gateway_cron_job_suppresses_intermediate_progress(
     bus.publish_outbound.assert_not_awaited()
 
 
+def test_gateway_heartbeat_fails_closed_and_suppresses_message_tool(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Heartbeat only delivers after an explicit positive evaluation, and
+    internal checks cannot bypass that gate with the proactive message tool."""
+    from nanobot.agent.tools.message import MessageTool
+
+    config_file = tmp_path / "instance" / "config.json"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text("{}")
+
+    config = Config()
+    config.agents.defaults.workspace = str(tmp_path / "config-workspace")
+    config.workspace_path.mkdir(parents=True)
+    (config.workspace_path / "HEARTBEAT.md").write_text(
+        "Check whether anything needs attention.",
+        encoding="utf-8",
+    )
+
+    bus = MagicMock()
+    bus.publish_outbound = AsyncMock()
+    seen: dict[str, object] = {}
+
+    class _FakeSession:
+        def retain_recent_legal_suffix(self, _keep: int) -> None:
+            seen["retained"] = True
+
+    class _FakeSessionManager:
+        def __init__(self, _workspace: Path) -> None:
+            self.session = _FakeSession()
+
+        def list_sessions(self) -> list[dict[str, object]]:
+            return [{"key": "lark:chat-1", "updated_at": "2026-05-30T00:00:00"}]
+
+        def get_or_create(self, key: str) -> _FakeSession:
+            seen["session_key"] = key
+            return self.session
+
+        def save(self, session: _FakeSession) -> None:
+            seen["saved"] = session
+
+    class _FakeCron:
+        def __init__(self, _store_path: Path) -> None:
+            self.on_job = None
+            seen["cron"] = self
+
+        def status(self) -> dict[str, int]:
+            return {"jobs": 0}
+
+        def register_system_job(self, job: CronJob) -> CronJob:
+            if job.name == "heartbeat":
+                seen["heartbeat_job"] = job
+                raise _StopGatewayError("stop")
+            return job
+
+    class _FakeDream:
+        model = None
+        max_batch_size = 0
+        max_iterations = 0
+        annotate_line_ages = False
+
+        async def run(self) -> None:
+            return None
+
+    class _FakeAgentLoop:
+        @classmethod
+        def from_config(cls, config, bus=None, **extra):
+            return cls(bus=bus, **extra)
+
+        def __init__(self, bus=None, **kwargs) -> None:
+            self.model = "test-model"
+            self.provider = object()
+            self.sessions = kwargs["session_manager"]
+            self.dream = _FakeDream()
+            self.tools = {
+                "message": MessageTool(send_callback=bus.publish_outbound),
+            }
+
+        async def process_direct(self, *_args, **_kwargs):
+            result = await self.tools["message"].execute(
+                content="All clear.",
+                channel="lark",
+                chat_id="chat-1",
+            )
+            seen["message_tool_result"] = result
+            return OutboundMessage(
+                channel="lark",
+                chat_id="chat-1",
+                content="All clear.",
+            )
+
+        async def close_mcp(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class _FakeChannels:
+        enabled_channels = ["lark"]
+
+    async def _capture_evaluate(*_args, **kwargs) -> bool:
+        seen["default_notify"] = kwargs.get("default_notify")
+        return False
+
+    _patch_cli_command_runtime(
+        monkeypatch,
+        config,
+        message_bus=lambda: bus,
+        session_manager=_FakeSessionManager,
+        cron_service=_FakeCron,
+    )
+    monkeypatch.setattr("nanobot.cli.commands.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr(
+        "nanobot.channels.manager.ChannelManager",
+        lambda *_args, **_kwargs: _FakeChannels(),
+    )
+    monkeypatch.setattr("nanobot.cli.commands.evaluate_response", _capture_evaluate)
+
+    result = runner.invoke(app, ["gateway", "--config", str(config_file)])
+    assert isinstance(result.exception, _StopGatewayError)
+
+    cron = seen["cron"]
+    response = asyncio.run(cron.on_job(seen["heartbeat_job"]))
+
+    assert response == "All clear."
+    assert seen["message_tool_result"] == "Message suppressed during internal check"
+    assert seen["default_notify"] is False
+    assert seen["session_key"] == "heartbeat"
+    assert seen["retained"] is True
+    bus.publish_outbound.assert_not_awaited()
+
+
 def test_gateway_workspace_override_does_not_migrate_legacy_cron(
     monkeypatch, tmp_path: Path
 ) -> None:

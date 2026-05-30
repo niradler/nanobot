@@ -100,8 +100,8 @@ _HEARTBEAT_PREAMBLE = (
     "[Your response will be delivered directly to the user's messaging app. "
     "Output ONLY the final user-facing message. Never reference internal "
     "files (HEARTBEAT.md, AWARENESS.md, etc.), your instructions, or your "
-    "decision process. If nothing needs reporting, respond with just "
-    "'All clear.' and nothing else.]\n\n"
+    "decision process. If nothing needs reporting, respond with a brief "
+    "no-op status and nothing else.]\n\n"
 )
 
 
@@ -991,13 +991,21 @@ def _run_gateway(
                 + f"Review the following HEARTBEAT.md and report any active tasks:\n\n{content}"
             )
 
-            resp = await agent.process_direct(
-                prompt,
-                session_key="heartbeat",
-                channel=channel,
-                chat_id=chat_id,
-                on_progress=_silent,
-            )
+            message_suppress_token = None
+            if isinstance(message_tool, MessageTool):
+                message_suppress_token = message_tool.set_suppress_delivery(True)
+
+            try:
+                resp = await agent.process_direct(
+                    prompt,
+                    session_key="heartbeat",
+                    channel=channel,
+                    chat_id=chat_id,
+                    on_progress=_silent,
+                )
+            finally:
+                if isinstance(message_tool, MessageTool) and message_suppress_token is not None:
+                    message_tool.reset_suppress_delivery(message_suppress_token)
             response = resp.content if resp else ""
 
             # Keep a small tail of heartbeat history so the loop stays bounded.
@@ -1009,7 +1017,7 @@ def _run_gateway(
                 return None
 
             should_notify = await evaluate_response(
-                response, prompt, agent.provider, agent.model,
+                response, prompt, agent.provider, agent.model, default_notify=False,
             )
             if should_notify:
                 logger.info("Heartbeat: completed, delivering response")

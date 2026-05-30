@@ -57,7 +57,37 @@ async def test_fallback_on_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fallback_can_fail_closed() -> None:
+    class FailingProvider(DummyProvider):
+        async def chat(self, *args, **kwargs) -> LLMResponse:
+            raise RuntimeError("provider down")
+
+    provider = FailingProvider([])
+    result = await evaluate_response(
+        "some response",
+        "some task",
+        provider,
+        "m",
+        default_notify=False,
+    )
+    assert result is False
+
+
+@pytest.mark.asyncio
 async def test_no_tool_call_fallback() -> None:
     provider = DummyProvider([LLMResponse(content="I think you should notify", tool_calls=[])])
     result = await evaluate_response("some response", "some task", provider, "m")
     assert result is True
+
+
+@pytest.mark.asyncio
+async def test_no_tool_call_can_fail_closed() -> None:
+    provider = DummyProvider([LLMResponse(content="I think you should notify", tool_calls=[])])
+    result = await evaluate_response(
+        "some response",
+        "some task",
+        provider,
+        "m",
+        default_notify=False,
+    )
+    assert result is False

@@ -83,6 +83,10 @@ class MessageTool(Tool, ContextAware):
             "message_record_channel_delivery",
             default=False,
         )
+        self._suppress_delivery_var: ContextVar[bool] = ContextVar(
+            "message_suppress_delivery",
+            default=False,
+        )
 
     @classmethod
     def create(cls, ctx: Any) -> Tool:
@@ -120,6 +124,14 @@ class MessageTool(Tool, ContextAware):
     def reset_record_channel_delivery(self, token) -> None:
         """Restore previous proactive delivery recording state."""
         self._record_channel_delivery_var.reset(token)
+
+    def set_suppress_delivery(self, active: bool):
+        """Temporarily suppress real channel delivery for internal checks."""
+        return self._suppress_delivery_var.set(active)
+
+    def reset_suppress_delivery(self, token) -> None:
+        """Restore previous channel delivery suppression state."""
+        self._suppress_delivery_var.reset(token)
 
     @property
     def _sent_in_turn(self) -> bool:
@@ -216,6 +228,9 @@ class MessageTool(Tool, ContextAware):
 
         if not channel or not chat_id:
             return "Error: No target channel/chat specified"
+
+        if self._suppress_delivery_var.get():
+            return "Message suppressed during internal check"
 
         if not self._send_callback:
             return "Error: Message sending not configured"
