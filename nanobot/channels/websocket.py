@@ -80,6 +80,7 @@ class WebSocketConfig(Base):
     token_issue_secret: str = ""
     token_ttl_s: int = Field(default=300, ge=30, le=86_400)
     websocket_requires_token: bool = True
+    trust_proxy_auth: bool = False
     allow_from: list[str] = Field(default_factory=lambda: ["*"])
     streaming: bool = True
     # Default 36 MB, upper 40 MB: supports up to 4 images at ~6 MB each after
@@ -133,6 +134,8 @@ class WebSocketConfig(Base):
     @model_validator(mode="after")
     def wildcard_host_requires_auth(self) -> Self:
         if self.host not in ("0.0.0.0", "::"):
+            return self
+        if self.trust_proxy_auth:
             return self
         if self.token.strip() or self.token_issue_secret.strip():
             return self

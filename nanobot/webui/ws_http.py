@@ -260,7 +260,9 @@ class GatewayHTTPHandler:
 
     def _handle_bootstrap(self, connection: Any, request: Any) -> Response:
         secret = self.config.token_issue_secret.strip() or self.config.token.strip()
-        if secret:
+        if getattr(self.config, "trust_proxy_auth", False):
+            pass
+        elif secret:
             if not _issue_route_secret_matches(request.headers, secret):
                 return _http_error(401, "Unauthorized")
         elif not _is_localhost(connection):
