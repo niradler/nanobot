@@ -1,5 +1,6 @@
 import type { BootstrapResponse } from "./types";
 import { fetchWithTimeout } from "./http";
+import { getBasePath } from "./base-path";
 
 const SECRET_STORAGE_KEY = "nanobot-webui.bootstrap-secret";
 
@@ -44,7 +45,10 @@ export async function fetchBootstrap(
   if (secret) {
     headers["X-Nanobot-Auth"] = secret;
   }
-  const res = await fetchWithTimeout(`${baseUrl}/webui/bootstrap`, {
+  // Fall back to the served base path (e.g. the HA Ingress prefix) when the
+  // caller does not pass an explicit base.
+  const root = baseUrl || getBasePath();
+  const res = await fetchWithTimeout(`${root}/webui/bootstrap`, {
     method: "GET",
     credentials: "same-origin",
     headers,
@@ -88,5 +92,9 @@ export function deriveWsUrl(
   }
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  return `${scheme}://${host}${path}${query}`;
+  // Prefix the served base path (e.g. the HA Ingress prefix) so the WS upgrade
+  // is routed through the same proxy that served the page. Empty for direct
+  // access, so non-ingress deployments are unchanged.
+  const base = getBasePath();
+  return `${scheme}://${host}${base}${path}${query}`;
 }

@@ -8,6 +8,9 @@ export default defineConfig(({ mode }) => {
   const hmrPath = "/__nanobot_vite_hmr";
 
   return {
+    // Relative asset base so the built app works under any path prefix,
+    // including Home Assistant Ingress (/api/hassio_ingress/<token>/).
+    base: "./",
     plugins: [react()],
     resolve: {
       alias: {
