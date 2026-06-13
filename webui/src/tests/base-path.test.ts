@@ -40,4 +40,16 @@ describe("deriveWsUrl under Ingress", () => {
       "wss://homeassistant.example.com/api/hassio_ingress/AbC-123/?token=tok",
     );
   });
+
+  it("ignores the server ws_url under a sub-path and uses the location prefix", () => {
+    stubLocation({
+      protocol: "https:",
+      host: "homeassistant.example.com",
+      port: "",
+      pathname: "/api/hassio_ingress/AbC-123/",
+    } as Partial<Location>);
+    expect(deriveWsUrl("/", "tok", "wss://homeassistant.example.com/")).toBe(
+      "wss://homeassistant.example.com/api/hassio_ingress/AbC-123/?token=tok",
+    );
+  });
 });

@@ -76,7 +76,8 @@ export function deriveWsUrl(
   wsUrl?: string | null,
 ): string {
   const query = `?token=${encodeURIComponent(token)}`;
-  if (wsUrl && /^(wss?|nanobot-host):\/\//i.test(wsUrl)) {
+  const base = getBasePath();
+  if (!base && wsUrl && /^(wss?|nanobot-host):\/\//i.test(wsUrl)) {
     const join = wsUrl.includes("?") ? "&" : "?";
     return `${wsUrl}${join}token=${encodeURIComponent(token)}`;
   }
@@ -92,9 +93,5 @@ export function deriveWsUrl(
   }
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  // Prefix the served base path (e.g. the HA Ingress prefix) so the WS upgrade
-  // is routed through the same proxy that served the page. Empty for direct
-  // access, so non-ingress deployments are unchanged.
-  const base = getBasePath();
   return `${scheme}://${host}${base}${path}${query}`;
 }
